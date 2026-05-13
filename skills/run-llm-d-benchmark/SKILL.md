@@ -156,12 +156,20 @@ Ask the user if they want to capture EPP heap and goroutine profiles during the 
    kubectl -n $NAMESPACE port-forward pod/$EPP_POD 9090:9090 &
    curl -s -o /dev/null -w "%{http_code}" http://localhost:9090/debug/pprof/heap
    ```
-   If this returns 401 or 500, inform the user that the EPP must be redeployed with `inferenceExtension.flags.metrics-endpoint-auth=false` and `inferenceExtension.flags.secure-serving=false`.
+   If this returns 401 or 500, inform the user that the EPP must be redeployed with `inferenceExtension.flags.metrics-endpoint-auth=false`.
 
-3. Run the leak analysis script in background, storing output alongside benchmark results:
+   **Helm chart boolean flag bug**: The standalone chart (v1.5.0) renders boolean flags with space separation (`--metrics-endpoint-auth false`) which Go pflag interprets as `--metrics-endpoint-auth` (true) + a positional arg. After helm upgrade, verify the EPP pod args use equals syntax. If not, patch the deployment:
+   ```bash
+   kubectl -n $NAMESPACE get deploy -l app.kubernetes.io/name=<epp-deploy> -o json | \
+     jq '.spec.template.spec.containers[0].args |= map(gsub("--metrics-endpoint-auth false";"--metrics-endpoint-auth=false"))' | \
+     kubectl apply -f -
+   ```
+
+3. Run the leak analysis script in background **before or simultaneously with the benchmark** (the script includes a warmup period equal to one interval before the first capture):
    ```bash
    ./pprof/leaks_analysis_ext.sh -n $NAMESPACE -p $EPP_POD -i 300 -c 12 -o <results-path>/pprof &
    ```
+   **Timing note**: Total pprof runtime is `(COUNT + 1) × INTERVAL` seconds (1 warmup + COUNT captures). Adjust `-i` and `-c` to match your benchmark duration.
 
 4. After the benchmark completes, wait for profiling to finish or terminate it early if the benchmark was shorter than the profiling window.
 
