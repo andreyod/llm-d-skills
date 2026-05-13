@@ -142,6 +142,31 @@ Use the command `./run_only.sh -c config.yaml`, monitor its progress and wait fo
 
 Note that the benchmark harness pod may still be running also after the benchmarking run is completed.
 
+### Step 10b (optional): EPP memory profiling
+
+Ask the user if they want to capture EPP heap and goroutine profiles during the benchmark run for memory leak detection. If yes:
+
+1. Identify the EPP pod:
+   ```bash
+   EPP_POD=$(kubectl -n $NAMESPACE get pods -o name | grep epp | head -1 | sed 's|pod/||')
+   ```
+
+2. Verify pprof is accessible (requires the EPP to be deployed with `metrics-endpoint-auth: "false"`):
+   ```bash
+   kubectl -n $NAMESPACE port-forward pod/$EPP_POD 9090:9090 &
+   curl -s -o /dev/null -w "%{http_code}" http://localhost:9090/debug/pprof/heap
+   ```
+   If this returns 401 or 500, inform the user that the EPP must be redeployed with `inferenceExtension.flags.metrics-endpoint-auth=false` and `inferenceExtension.flags.secure-serving=false`.
+
+3. Run the leak analysis script in background, storing output alongside benchmark results:
+   ```bash
+   ./pprof/leaks_analysis_ext.sh -n $NAMESPACE -p $EPP_POD -i 300 -c 12 -o <results-path>/pprof &
+   ```
+
+4. After the benchmark completes, wait for profiling to finish or terminate it early if the benchmark was shorter than the profiling window.
+
+5. Include the pprof results directory in Step 11's results collection.
+
 ### Step 11: Locate and save results
 
 Ask the user for a path to store the results. Save the benchmarking results by copying them from the BENCHMARK_PVC to a local `results` directory inside the path specified by the user.  This step requires locating the results of the current benchmarkr run in the BENCHMARK_PVC. This can be performed using the command ` kubectl exec -n $NAMESPACE llmdbench-harness-launcher -- ls -ltr /requests/`.
@@ -227,6 +252,7 @@ Required tools:
 - git
 - yq (YAML processor, version ≥ 4) — required by `run_only.sh`
 - `timeout` utility — on macOS, install with `brew install coreutils` if missing
+- `go` (optional) — required only for Step 10b EPP memory profiling (`go tool pprof`)
 
 
 ## Security Considerations
